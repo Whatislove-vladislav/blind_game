@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="uk">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Командні П'ятнашки 6x6</title>
+    <style>
+        /* Ваші стилі без змін */
+        body {
+            font-family: sans-serif;
+            background: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .screen {
+            display: none;
+            width: 100%;
+            max-width: 500px;
+        }
+
+        .active {
+            display: block;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+            font-size: 16px;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+
+        button:active {
+            opacity: 0.8;
+        }
+
+        #game {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 5px;
+            margin: 20px 0;
+        }
+
+        .tile {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            user-select: none;
+            text-align: center;
+            padding: 3px;
+            transition: transform 0.15s;
+            box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .good {
+            background: #fff;
+            color: #000;
+        }
+
+        .bad {
+            background: #000;
+            color: #fff;
+        }
+
+        .empty {
+            background: transparent;
+            border: 1px dashed #ccc;
+            cursor: default;
+        }
+
+        .bomb {
+            background: #d32f2f;
+            color: white;
+            cursor: not-allowed;
+        }
+
+        .player-role {
+            margin: 15px 0;
+            padding: 10px;
+            background: #e8f5e9;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        @media (max-width: 450px) {
+            .tile {
+                font-size: 10px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Екран створення/приєднання до команди -->
+    <div id="team-screen" class="screen active">
+        <h1>Командні П'ятнашки</h1>
+        <div id="create-team">
+            <input type="text" id="player-name" placeholder="Ваше ім'я">
+            <input type="text" id="team-name" placeholder="Назва команди">
+            <button onclick="createTeam()">Створити команду</button>
+        </div>
+        <div id="join-team" style="margin-top: 30px;">
+            <h3>Або приєднатися до команди:</h3>
+            <input type="text" id="join-code" placeholder="Код команди">
+            <button onclick="joinTeam()">Приєднатися</button>
+        </div>
+    </div>
+
+    <!-- Екран очікування гравців -->
+    <div id="waiting-screen" class="screen">
+        <h1>Очікуємо гравців...</h1>
+        <div id="team-code-display" style="font-size: 24px; text-align: center; margin: 20px 0;"></div>
+        <div id="players-list"></div>
+        <button onclick="startGame()" id="start-btn" disabled>Почати гру</button>
+    </div>
+
+    <!-- Основний ігровий екран -->
+    <div id="game-screen" class="screen">
+        <h1 id="team-name-display"></h1>
+        <div id="player-role" class="player-role"></div>
+        <div id="game"></div>
+        <div id="instructions"></div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.8.3/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.8.3/firebase-database.js"></script>
+    <script>
+        // Ініціалізація Firebase
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        const app = firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // Константи гри
+        const FINAL_ORDER = ['Тік Ток', 'Рілси', 'Бравл Старс', 'Інстаграм', 'Ютуб Шортс', 'Снапчат'];
+        const gridSize = 6;
+        const BOMB = '💣';
+
+        // Дані гри
+        const goodTiles = [
+            'Прогулятися', 'Поспілкуватися', 'Допомогти батькам', 'Спорт',
+            'Книга', 'Молитва', 'Прибирання', 'Музика',
+            'Планування', 'Сон', 'Уроки', 'Настільні ігри',
+            'Хобі', 'Нове слово', 'Малювання', 'Зарядка',
+            'Лист', 'Іноземна мова', 'Готування', 'Документальний фільм'
+        ];
+
+        const badTiles = [...FINAL_ORDER];
+
+        // Стан гри
+        let currentScreen = 'team';
+        let playerId = '';
+        let teamId = '';
+        let playerName = '';
+        let isBlindPlayer = false;
+        let tiles = [];
+        let bombPosition = -1;
+
+        // Елементи інтерфейсу
+        const screens = {
+            team: document.getElementById('team-screen'),
+            waiting: document.getElementById('waiting-screen'),
+            game: document.getElementById('game-screen')
+        };
+
+        // Створення команди
+        function createTeam() {
+            playerName = document.getElementById('player-name').value.trim();
+            const teamName = document.getElementById('team-name').value.trim();
+
+            if (!playerName || !teamName) {
+                alert("Будь ласка, введіть ім'я та назву команди");
+                return;
+            }
+
+            // Генеруємо унікальний код команди
+            teamId = 'team_' + Math.random().toString(36).substr(2, 8);
+
+            // Створюємо нову команду в Firebase
+            const newTeamRef = database.ref('teams/' + teamId);
+            newTeamRef.set({
+                name: teamName,
+                players: [{
+                    id: 'player_' + Math.random().toString(36).substr(2, 8),
+                    name: playerName,
+                    isBlind: false
+                }],
+                gameState: null,
+                isPlaying: false
+            });
+
+            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
+
+            // Показуємо код команди на екрані
+            document.getElementById('team-code-display').textContent = `Код команди: ${teamId}`;
+            updatePlayersList();
+            showScreen('waiting');
+
+            // Оновлюємо список гравців кожні 2 секунди
+            setInterval(() => {
+                if (currentScreen === 'waiting') {
+                    updatePlayersList();
+                    checkGameStart();
+                }
+            }, 2000);
+        }
+
+        // Приєднання до команди
+        function joinTeam() {
+            playerName = document.getElementById('player-name').value.trim();
+            const joinCode = document.getElementById('join-code').value.trim();
+
+            if (!playerName || !joinCode) {
+                alert("Будь ласка, введіть ім'я та код команди");
+                return;
+            }
+
+            teamId = joinCode;
+
+            // Перевіряємо, чи існує команда в Firebase
+            const teamRef = database.ref('teams/' + teamId);
+            teamRef.once('value', (snapshot) => {
+                const teamData = snapshot.val();
+
+                if (!teamData) {
+                    alert("Команда з таким кодом не знайдена");
+                    return;
+                }
+
+                playerId = 'player_' + Math.random().toString(36).substr(2, 8);
+
+                // Додаємо нового гравця до команди в Firebase
+                const playersRef = teamRef.child('players');
+                playersRef.push({
+                    id: playerId,
+                    name: playerName,
+                    isBlind: false
+                });
+
+                showScreen('waiting');
+                updatePlayersList();
+
+                // Оновлюємо список гравців кожні 2 секунди
+                setInterval(() => {
+                    if (currentScreen === 'waiting') {
+                        updatePlayersList();
+                        checkGameStart();
+                    }
+                }, 2000);
+            });
+        }
+
+        // Оновлення списку гравців
+        function updatePlayersList() {
+            const teamRef = database.ref('teams/' + teamId);
+            teamRef.once('value', (snapshot) => {
+                const teamData = snapshot.val();
+                if (!teamData) return;
+
+                const playersList = document.getElementById('players-list');
+                playersList.innerHTML = '<h3>Гравці в команді:</h3>' +
+                    teamData.players.map(p => `<div>${p.name}</div>`).join('');
+
+                // Тільки перший гравець може почати гру
+                document.getElementById('start-btn').disabled =
+                    teamData.players[0].id !== playerId || teamData.players.length < 3;
+            });
+        }
+
+        // Перевірка, чи можна почати гру
+        function checkGameStart() {
+            const teamRef = database.ref('teams/' + teamId);
+            teamRef.once('value', (snapshot) => {
+                const teamData = snapshot.val();
+                if (teamData && !teamData.isPlaying) {
+                    startGame();
+                }
+            });
+        }
+
+        // Початок гри
+        function startGame() {
+            const teamRef = database.ref('teams/' + teamId);
+            teamRef.once('value', (snapshot) => {
+                const teamData = snapshot.val();
+                if (!teamData) return;
+
+                // Встановлюємо стан гри в 'гра почалася'
+                teamRef.update({ isPlaying: true });
+                showScreen('game');
+
+                tiles = generateTiles();
+                bombPosition = Math.floor(Math.random() * (gridSize * gridSize));
+                renderTiles();
+            });
+        }
+
+        // Генерація плиток для гри
+        function generateTiles() {
+            const allTiles = goodTiles.concat(badTiles);
+            while (allTiles.length < gridSize * gridSize) {
+                allTiles.push('🟦');
+            }
+            return shuffle(allTiles).slice(0, gridSize * gridSize);
+        }
+
+        // Перемішування масиву
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        // Відображення плиток на екрані
+        function renderTiles() {
+            const gameContainer = document.getElementById('game');
+            gameContainer.innerHTML = '';
+            tiles.forEach((tile, index) => {
+                const tileElement = document.createElement('div');
+                tileElement.classList.add('tile');
+                tileElement.textContent = tile;
+                tileElement.onclick = () => tileClick(index);
+                gameContainer.appendChild(tileElement);
+            });
+        }
+
+        // Обробка кліку по плитці
+        function tileClick(index) {
+            const tile = tiles[index];
+
+            if (index === bombPosition) {
+                alert('Гра завершена! Ви натрапили на вибух!');
+                resetGame();
+            } else {
+                tiles[index] = '✅';
+                renderTiles();
+            }
+        }
+
+        // Скидання гри
+        function resetGame() {
+            tiles = [];
+            bombPosition = -1;
+            showScreen('team');
+        }
+
+        // Показати екран
+        function showScreen(screenName) {
+            Object.values(screens).forEach(screen => {
+                screen.classList.remove('active');
+            });
+            screens[screenName].classList.add('active');
+            currentScreen = screenName;
+        }
+    </script>
+</body>
+
+</html>

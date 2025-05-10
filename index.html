@@ -2,8 +2,8 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Командні П'ятнашки 6x6 (Автозаповнення)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Командні П'ятнашки 6x6</title>
     <style>
         body {
             font-family: sans-serif;
@@ -17,22 +17,22 @@
             padding: 10px;
             box-sizing: border-box;
         }
-
+        
         .screen {
             display: none;
             width: 100%;
             max-width: 500px;
         }
-
+        
         .active {
             display: block;
         }
-
+        
         h1 {
             text-align: center;
             margin-bottom: 20px;
         }
-
+        
         input, button {
             width: 100%;
             padding: 12px;
@@ -41,7 +41,7 @@
             border: 1px solid #ddd;
             font-size: 16px;
         }
-
+        
         button {
             background: #4CAF50;
             color: white;
@@ -50,28 +50,28 @@
             font-weight: bold;
             transition: opacity 0.2s;
         }
-
+        
         button:active {
             opacity: 0.8;
         }
-
+        
         .role-buttons {
             display: flex;
             gap: 10px;
             margin: 15px 0;
         }
-
+        
         .role-buttons button {
             flex: 1;
         }
-
+        
         #game {
             display: grid;
             grid-template-columns: repeat(6, 1fr);
             gap: 5px;
             margin: 20px 0;
         }
-
+        
         .tile {
             aspect-ratio: 1;
             display: flex;
@@ -87,29 +87,29 @@
             transition: transform 0.15s;
             box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1);
         }
-
+        
         .good {
             background: #fff;
             color: #000;
         }
-
+        
         .bad {
             background: #000;
             color: #fff;
         }
-
+        
         .empty {
             background: transparent;
             border: 1px dashed #ccc;
             cursor: default;
         }
-
+        
         .bomb {
             background: #d32f2f;
             color: white;
             cursor: not-allowed;
         }
-
+        
         .player-role {
             margin: 15px 0;
             padding: 10px;
@@ -118,7 +118,16 @@
             text-align: center;
             font-weight: bold;
         }
-
+        
+        #room-info {
+            font-size: 18px;
+            text-align: center;
+            margin: 15px 0;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 6px;
+        }
+        
         @media (max-width: 450px) {
             .tile {
                 font-size: 10px;
@@ -126,7 +135,6 @@
         }
     </style>
 </head>
-
 <body>
     <!-- Екран вибору ролі -->
     <div id="role-screen" class="screen active">
@@ -138,16 +146,16 @@
         </div>
     </div>
 
-    <!-- Екран очікування гравців -->
+    <!-- Екран очікування -->
     <div id="waiting-screen" class="screen">
         <h1>Очікуємо гравців...</h1>
-        <div id="team-info"></div>
+        <div id="room-info"></div>
         <div id="players-list"></div>
     </div>
 
-    <!-- Основний ігровий екран -->
+    <!-- Ігровий екран -->
     <div id="game-screen" class="screen">
-        <h1 id="team-name-display"></h1>
+        <h1>Гра триває!</h1>
         <div id="player-role" class="player-role"></div>
         <div id="game"></div>
     </div>
@@ -162,7 +170,8 @@
             projectId: "nenasytna-poroshnecha",
             storageBucket: "nenasytna-poroshnecha.appspot.com",
             messagingSenderId: "752057294970",
-            appId: "1:752057294970:web:72729b43c584a21214dbc3"
+            appId: "1:752057294970:web:72729b43c584a21214dbc3",
+            measurementId: "G-X25N330RMM"
         };
 
         const app = firebase.initializeApp(firebaseConfig);
@@ -176,11 +185,13 @@
         // Стан гри
         let playerId = '';
         let playerName = '';
-        let teamId = '';
+        let roomId = '';
         let playerRole = '';
-        let currentRoom = '';
+        let isHost = false;
+        let tiles = [];
+        let bombPosition = -1;
 
-        // Приєднання як Сліпий (1 гравець)
+        // Приєднання як Сліпий
         function joinAsBlind() {
             playerName = document.getElementById('player-name').value.trim();
             if (!playerName) {
@@ -191,7 +202,7 @@
             findOrCreateRoom();
         }
 
-        // Приєднання як Керівник (2 гравці)
+        // Приєднання як Керівник
         function joinAsLeader() {
             playerName = document.getElementById('player-name').value.trim();
             if (!playerName) {
@@ -204,31 +215,32 @@
 
         // Пошук або створення кімнати
         function findOrCreateRoom() {
-            const roomsRef = database.ref('rooms');
+            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
             
-            roomsRef.once('value', (snapshot) => {
+            database.ref('rooms').once('value', (snapshot) => {
                 let foundRoom = false;
                 
-                // Шукаємо кімнату, де ще є місце
                 snapshot.forEach((roomSnapshot) => {
                     const room = roomSnapshot.val();
                     
                     // Якщо кімната ще не заповнена
                     if (!room.isFull) {
-                        // Перевіряємо, чи підходить ця кімната для гравця
-                        if (
-                            (playerRole === 'blind' && room.blindPlayers < 1) ||
-                            (playerRole === 'leader' && room.leaderPlayers < 2)
-                        ) {
+                        // Для сліпих - шукаємо кімнату без сліпого
+                        if (playerRole === 'blind' && room.blindCount === 0) {
+                            joinRoom(roomSnapshot.key);
                             foundRoom = true;
-                            currentRoom = roomSnapshot.key;
-                            joinRoom(currentRoom);
+                            return;
+                        }
+                        // Для керівників - шукаємо кімнату з менш ніж 2 керівниками
+                        else if (playerRole === 'leader' && room.leaderCount < 2) {
+                            joinRoom(roomSnapshot.key);
+                            foundRoom = true;
                             return;
                         }
                     }
                 });
                 
-                // Якщо вільної кімнати не знайдено - створюємо нову
+                // Якщо не знайшли підходячу кімнату - створюємо нову
                 if (!foundRoom) {
                     createNewRoom();
                 }
@@ -237,12 +249,12 @@
 
         // Створення нової кімнати
         function createNewRoom() {
-            const newRoomRef = database.ref('rooms').push();
-            currentRoom = newRoomRef.key;
+            roomId = 'room_' + Math.random().toString(36).substr(2, 8);
+            isHost = true;
             
             const roomData = {
-                blindPlayers: playerRole === 'blind' ? 1 : 0,
-                leaderPlayers: playerRole === 'leader' ? 1 : 0,
+                blindCount: playerRole === 'blind' ? 1 : 0,
+                leaderCount: playerRole === 'leader' ? 1 : 0,
                 players: {
                     [playerId]: {
                         name: playerName,
@@ -250,126 +262,161 @@
                     }
                 },
                 isFull: false,
-                isPlaying: false
+                gameStarted: false
             };
             
-            newRoomRef.set(roomData);
-            
-            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
+            database.ref('rooms/' + roomId).set(roomData);
+            setupRoomListeners();
             showWaitingScreen();
-            setupRoomListener();
         }
 
         // Приєднання до існуючої кімнати
-        function joinRoom(roomId) {
-            const roomRef = database.ref('rooms/' + roomId);
+        function joinRoom(existingRoomId) {
+            roomId = existingRoomId;
+            const updates = {};
             
-            roomRef.transaction((room) => {
-                if (!room) return room;
+            updates[`/rooms/${roomId}/players/${playerId}`] = {
+                name: playerName,
+                role: playerRole
+            };
+            
+            if (playerRole === 'blind') {
+                updates[`/rooms/${roomId}/blindCount`] = firebase.database.ServerValue.increment(1);
+            } else {
+                updates[`/rooms/${roomId}/leaderCount`] = firebase.database.ServerValue.increment(1);
+            }
+            
+            // Перевіряємо, чи кімната тепер заповнена
+            database.ref(`rooms/${roomId}`).once('value').then((snapshot) => {
+                const room = snapshot.val();
+                const blindFull = room.blindCount + (playerRole === 'blind' ? 1 : 0) >= 1;
+                const leadersFull = room.leaderCount + (playerRole === 'leader' ? 1 : 0) >= 2;
                 
-                // Оновлюємо кількість гравців
-                if (playerRole === 'blind') {
-                    room.blindPlayers = (room.blindPlayers || 0) + 1;
-                } else {
-                    room.leaderPlayers = (room.leaderPlayers || 0) + 1;
+                if (blindFull && leadersFull) {
+                    updates[`/rooms/${roomId}/isFull`] = true;
                 }
                 
-                // Додаємо гравця до списку
-                room.players = room.players || {};
-                room.players[playerId] = {
-                    name: playerName,
-                    role: playerRole
-                };
-                
-                // Перевіряємо, чи кімната заповнена
-                if (room.blindPlayers >= 1 && room.leaderPlayers >= 2) {
-                    room.isFull = true;
-                }
-                
-                return room;
+                database.ref().update(updates);
+                setupRoomListeners();
+                showWaitingScreen();
             });
+        }
+
+        // Налаштування слухачів змін у кімнаті
+        function setupRoomListeners() {
+            const roomRef = database.ref(`rooms/${roomId}`);
             
-            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
-            showWaitingScreen();
-            setupRoomListener();
-        }
-
-        // Відображення екрану очікування
-        function showWaitingScreen() {
-            document.getElementById('role-screen').classList.remove('active');
-            document.getElementById('waiting-screen').classList.add('active');
-            updatePlayersList();
-        }
-
-        // Оновлення списку гравців
-        function updatePlayersList() {
-            const roomRef = database.ref('rooms/' + currentRoom);
             roomRef.on('value', (snapshot) => {
                 const room = snapshot.val();
                 if (!room) return;
                 
+                // Оновлюємо інтерфейс
+                document.getElementById('room-info').textContent = 
+                    `Кімната: ${roomId}\nСліпих: ${room.blindCount || 0}, Керівників: ${room.leaderCount || 0}`;
+                
+                // Оновлюємо список гравців
                 const playersList = document.getElementById('players-list');
-                playersList.innerHTML = '<h3>Гравці в кімнаті:</h3>';
+                playersList.innerHTML = '<h3>Гравці:</h3>';
                 
                 for (const [id, player] of Object.entries(room.players || {})) {
                     playersList.innerHTML += `<div>${player.name} (${player.role === 'blind' ? 'Сліпий' : 'Керівник'})</div>`;
                 }
                 
-                document.getElementById('team-info').textContent = 
-                    `Кімната: ${currentRoom}\nСліпих: ${room.blindPlayers || 0}, Керівників: ${room.leaderPlayers || 0}`;
-            });
-        }
-
-        // Слухач змін у кімнаті
-        function setupRoomListener() {
-            const roomRef = database.ref('rooms/' + currentRoom);
-            
-            roomRef.on('value', (snapshot) => {
-                const room = snapshot.val();
-                if (!room) return;
-                
-                // Якщо кімната заповнена і гра починається
-                if (room.isFull && room.isPlaying) {
+                // Якщо кімната заповнена і гра почалася
+                if (room.isFull && room.gameStarted) {
                     startGame();
                 }
             });
         }
 
+        // Показати екран очікування
+        function showWaitingScreen() {
+            document.getElementById('role-screen').classList.remove('active');
+            document.getElementById('waiting-screen').classList.add('active');
+        }
+
         // Початок гри
         function startGame() {
-            const roomRef = database.ref('rooms/' + currentRoom);
+            document.getElementById('waiting-screen').classList.remove('active');
+            document.getElementById('game-screen').classList.add('active');
             
-            roomRef.once('value', (snapshot) => {
-                const room = snapshot.val();
-                if (!room) return;
-                
-                // Встановлюємо роль гравця
-                const playerData = room.players[playerId];
-                document.getElementById('player-role').textContent = 
-                    `Ваша роль: ${playerData.role === 'blind' ? 'Сліпий' : 'Керівник'}`;
-                
-                // Генеруємо гру (спрощено)
-                generateGame();
-                
-                // Показуємо ігровий екран
-                document.getElementById('waiting-screen').classList.remove('active');
-                document.getElementById('game-screen').classList.add('active');
-            });
+            document.getElementById('player-role').textContent = 
+                `Ви ${playerRole === 'blind' ? 'Сліпий' : 'Керівник'}: ${playerName}`;
+            
+            // Генеруємо гру
+            generateGame();
+            renderTiles();
         }
 
-        // Генерація гри (спрощено)
+        // Генерація гри
         function generateGame() {
-            // Тут має бути ваша логіка генерації гри
-            // Наприклад, створення плиток, розміщення бомби тощо
-            console.log("Гра почалася!");
+            const allTiles = [
+                'Прогулятися', 'Поспілкуватися', 'Допомогти батькам', 'Спорт',
+                'Книга', 'Молитва', 'Прибирання', 'Музика',
+                'Планування', 'Сон', 'Уроки', 'Настільні ігри',
+                'Хобі', 'Нове слово', 'Малювання', 'Зарядка',
+                'Лист', 'Іноземна мова', 'Готування', 'Документальний фільм',
+                ...FINAL_ORDER
+            ];
+            
+            // Додаємо пусті плитки, якщо потрібно
+            while (allTiles.length < gridSize * gridSize) {
+                allTiles.push('🟦');
+            }
+            
+            // Перемішуємо та обираємо бомбу
+            tiles = shuffle(allTiles).slice(0, gridSize * gridSize);
+            bombPosition = Math.floor(Math.random() * tiles.length);
         }
 
-        // Показуємо екран
-        function showScreen(screenName) {
-            document.querySelectorAll('.screen').forEach(screen => {
-                screen.classList.remove('active');
+        // Відображення плиток
+        function renderTiles() {
+            const gameContainer = document.getElementById('game');
+            gameContainer.innerHTML = '';
+            
+            tiles.forEach((tile, index) => {
+                const tileElement = document.createElement('div');
+                tileElement.className = 'tile';
+                tileElement.textContent = tile;
+                
+                if (index === bombPosition) {
+                    tileElement.classList.add('bomb');
+                } else if (FINAL_ORDER.includes(tile)) {
+                    tileElement.classList.add('bad');
+                } else {
+                    tileElement.classList.add('good');
+                }
+                
+                tileElement.onclick = () => handleTileClick(index);
+                gameContainer.appendChild(tileElement);
             });
-            document.getElementById(screenName).classList.add('active');
+        }
+
+        // Обробка кліку на плитку
+        function handleTileClick(index) {
+            if (index === bombPosition) {
+                alert('БУМ! Ви програли!');
+                resetGame();
+            } else {
+                tiles[index] = '✅';
+                renderTiles();
+            }
+        }
+
+        // Скидання гри
+        function resetGame() {
+            database.ref(`rooms/${roomId}`).remove();
+            document.getElementById('game-screen').classList.remove('active');
+            document.getElementById('role-screen').classList.add('active');
+        }
+
+        // Допоміжна функція для перемішування масиву
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
         }
     </script>
 </body>

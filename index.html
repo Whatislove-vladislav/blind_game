@@ -1,12 +1,10 @@
 <!DOCTYPE html>
 <html lang="uk">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Командні П'ятнашки 6x6</title>
+    <title>Командні П'ятнашки 6x6 (Автозаповнення)</title>
     <style>
-        /* Ваші стилі без змін */
         body {
             font-family: sans-serif;
             background: #f0f0f0;
@@ -35,8 +33,7 @@
             margin-bottom: 20px;
         }
 
-        input,
-        button {
+        input, button {
             width: 100%;
             padding: 12px;
             margin: 8px 0;
@@ -56,6 +53,16 @@
 
         button:active {
             opacity: 0.8;
+        }
+
+        .role-buttons {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .role-buttons button {
+            flex: 1;
         }
 
         #game {
@@ -121,28 +128,21 @@
 </head>
 
 <body>
-
-    <!-- Екран створення/приєднання до команди -->
-    <div id="team-screen" class="screen active">
+    <!-- Екран вибору ролі -->
+    <div id="role-screen" class="screen active">
         <h1>Командні П'ятнашки</h1>
-        <div id="create-team">
-            <input type="text" id="player-name" placeholder="Ваше ім'я">
-            <input type="text" id="team-name" placeholder="Назва команди">
-            <button onclick="createTeam()">Створити команду</button>
-        </div>
-        <div id="join-team" style="margin-top: 30px;">
-            <h3>Або приєднатися до команди:</h3>
-            <input type="text" id="join-code" placeholder="Код команди">
-            <button onclick="joinTeam()">Приєднатися</button>
+        <input type="text" id="player-name" placeholder="Ваше ім'я">
+        <div class="role-buttons">
+            <button onclick="joinAsBlind()">Сліпий (1 гравець)</button>
+            <button onclick="joinAsLeader()">Керівник (2 гравці)</button>
         </div>
     </div>
 
     <!-- Екран очікування гравців -->
     <div id="waiting-screen" class="screen">
         <h1>Очікуємо гравців...</h1>
-        <div id="team-code-display" style="font-size: 24px; text-align: center; margin: 20px 0;"></div>
+        <div id="team-info"></div>
         <div id="players-list"></div>
-        <button onclick="startGame()" id="start-btn" disabled>Почати гру</button>
     </div>
 
     <!-- Основний ігровий екран -->
@@ -150,7 +150,6 @@
         <h1 id="team-name-display"></h1>
         <div id="player-role" class="player-role"></div>
         <div id="game"></div>
-        <div id="instructions"></div>
     </div>
 
     <script src="https://www.gstatic.com/firebasejs/9.8.3/firebase-app.js"></script>
@@ -158,14 +157,13 @@
     <script>
         // Ініціалізація Firebase
         const firebaseConfig = {
-    apiKey: "AIzaSyCoGZn0wvV0ulsHY210udC7q1p3cTuScHk",
-    authDomain: "nenasytna-poroshnecha.firebaseapp.com",
-    projectId: "nenasytna-poroshnecha",
-    storageBucket: "nenasytna-poroshnecha.firebasestorage.app",
-    messagingSenderId: "752057294970",
-    appId: "1:752057294970:web:72729b43c584a21214dbc3",
-    measurementId: "G-X25N330RMM"
-  };
+            apiKey: "AIzaSyCoGZn0wvV0ulsHY210udC7q1p3cTuScHk",
+            authDomain: "nenasytna-poroshnecha.firebaseapp.com",
+            projectId: "nenasytna-poroshnecha",
+            storageBucket: "nenasytna-poroshnecha.appspot.com",
+            messagingSenderId: "752057294970",
+            appId: "1:752057294970:web:72729b43c584a21214dbc3"
+        };
 
         const app = firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
@@ -175,143 +173,163 @@
         const gridSize = 6;
         const BOMB = '💣';
 
-        // Дані гри
-        const goodTiles = [
-            'Прогулятися', 'Поспілкуватися', 'Допомогти батькам', 'Спорт',
-            'Книга', 'Молитва', 'Прибирання', 'Музика',
-            'Планування', 'Сон', 'Уроки', 'Настільні ігри',
-            'Хобі', 'Нове слово', 'Малювання', 'Зарядка',
-            'Лист', 'Іноземна мова', 'Готування', 'Документальний фільм'
-        ];
-
-        const badTiles = [...FINAL_ORDER];
-
         // Стан гри
-        let currentScreen = 'team';
         let playerId = '';
-        let teamId = '';
         let playerName = '';
-        let isBlindPlayer = false;
-        let tiles = [];
-        let bombPosition = -1;
+        let teamId = '';
+        let playerRole = '';
+        let currentRoom = '';
 
-        // Елементи інтерфейсу
-        const screens = {
-            team: document.getElementById('team-screen'),
-            waiting: document.getElementById('waiting-screen'),
-            game: document.getElementById('game-screen')
-        };
-
-        // Створення команди
-        function createTeam() {
+        // Приєднання як Сліпий (1 гравець)
+        function joinAsBlind() {
             playerName = document.getElementById('player-name').value.trim();
-            const teamName = document.getElementById('team-name').value.trim();
-
-            if (!playerName || !teamName) {
-                alert("Будь ласка, введіть ім'я та назву команди");
+            if (!playerName) {
+                alert("Будь ласка, введіть ваше ім'я");
                 return;
             }
-
-            // Генеруємо унікальний код команди
-            teamId = 'team_' + Math.random().toString(36).substr(2, 8);
-
-            // Створюємо нову команду в Firebase
-            const newTeamRef = database.ref('teams/' + teamId);
-            newTeamRef.set({
-                name: teamName,
-                players: [{
-                    id: 'player_' + Math.random().toString(36).substr(2, 8),
-                    name: playerName,
-                    isBlind: false
-                }],
-                gameState: null,
-                isPlaying: false
-            });
-
-            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
-
-            // Показуємо код команди на екрані
-            document.getElementById('team-code-display').textContent = `Код команди: ${teamId}`;
-            updatePlayersList();
-            showScreen('waiting');
-
-            // Оновлюємо список гравців кожні 2 секунди
-            setInterval(() => {
-                if (currentScreen === 'waiting') {
-                    updatePlayersList();
-                    checkGameStart();
-                }
-            }, 2000);
+            playerRole = 'blind';
+            findOrCreateRoom();
         }
 
-        // Приєднання до команди
-        function joinTeam() {
+        // Приєднання як Керівник (2 гравці)
+        function joinAsLeader() {
             playerName = document.getElementById('player-name').value.trim();
-            const joinCode = document.getElementById('join-code').value.trim();
-
-            if (!playerName || !joinCode) {
-                alert("Будь ласка, введіть ім'я та код команди");
+            if (!playerName) {
+                alert("Будь ласка, введіть ваше ім'я");
                 return;
             }
+            playerRole = 'leader';
+            findOrCreateRoom();
+        }
 
-            teamId = joinCode;
-
-            // Перевіряємо, чи існує команда в Firebase
-            const teamRef = database.ref('teams/' + teamId);
-            teamRef.once('value', (snapshot) => {
-                const teamData = snapshot.val();
-
-                if (!teamData) {
-                    alert("Команда з таким кодом не знайдена");
-                    return;
-                }
-
-                playerId = 'player_' + Math.random().toString(36).substr(2, 8);
-
-                // Додаємо нового гравця до команди в Firebase
-                const playersRef = teamRef.child('players');
-                playersRef.push({
-                    id: playerId,
-                    name: playerName,
-                    isBlind: false
-                });
-
-                showScreen('waiting');
-                updatePlayersList();
-
-                // Оновлюємо список гравців кожні 2 секунди
-                setInterval(() => {
-                    if (currentScreen === 'waiting') {
-                        updatePlayersList();
-                        checkGameStart();
+        // Пошук або створення кімнати
+        function findOrCreateRoom() {
+            const roomsRef = database.ref('rooms');
+            
+            roomsRef.once('value', (snapshot) => {
+                let foundRoom = false;
+                
+                // Шукаємо кімнату, де ще є місце
+                snapshot.forEach((roomSnapshot) => {
+                    const room = roomSnapshot.val();
+                    
+                    // Якщо кімната ще не заповнена
+                    if (!room.isFull) {
+                        // Перевіряємо, чи підходить ця кімната для гравця
+                        if (
+                            (playerRole === 'blind' && room.blindPlayers < 1) ||
+                            (playerRole === 'leader' && room.leaderPlayers < 2)
+                        ) {
+                            foundRoom = true;
+                            currentRoom = roomSnapshot.key;
+                            joinRoom(currentRoom);
+                            return;
+                        }
                     }
-                }, 2000);
+                });
+                
+                // Якщо вільної кімнати не знайдено - створюємо нову
+                if (!foundRoom) {
+                    createNewRoom();
+                }
             });
+        }
+
+        // Створення нової кімнати
+        function createNewRoom() {
+            const newRoomRef = database.ref('rooms').push();
+            currentRoom = newRoomRef.key;
+            
+            const roomData = {
+                blindPlayers: playerRole === 'blind' ? 1 : 0,
+                leaderPlayers: playerRole === 'leader' ? 1 : 0,
+                players: {
+                    [playerId]: {
+                        name: playerName,
+                        role: playerRole
+                    }
+                },
+                isFull: false,
+                isPlaying: false
+            };
+            
+            newRoomRef.set(roomData);
+            
+            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
+            showWaitingScreen();
+            setupRoomListener();
+        }
+
+        // Приєднання до існуючої кімнати
+        function joinRoom(roomId) {
+            const roomRef = database.ref('rooms/' + roomId);
+            
+            roomRef.transaction((room) => {
+                if (!room) return room;
+                
+                // Оновлюємо кількість гравців
+                if (playerRole === 'blind') {
+                    room.blindPlayers = (room.blindPlayers || 0) + 1;
+                } else {
+                    room.leaderPlayers = (room.leaderPlayers || 0) + 1;
+                }
+                
+                // Додаємо гравця до списку
+                room.players = room.players || {};
+                room.players[playerId] = {
+                    name: playerName,
+                    role: playerRole
+                };
+                
+                // Перевіряємо, чи кімната заповнена
+                if (room.blindPlayers >= 1 && room.leaderPlayers >= 2) {
+                    room.isFull = true;
+                }
+                
+                return room;
+            });
+            
+            playerId = 'player_' + Math.random().toString(36).substr(2, 8);
+            showWaitingScreen();
+            setupRoomListener();
+        }
+
+        // Відображення екрану очікування
+        function showWaitingScreen() {
+            document.getElementById('role-screen').classList.remove('active');
+            document.getElementById('waiting-screen').classList.add('active');
+            updatePlayersList();
         }
 
         // Оновлення списку гравців
         function updatePlayersList() {
-            const teamRef = database.ref('teams/' + teamId);
-            teamRef.once('value', (snapshot) => {
-                const teamData = snapshot.val();
-                if (!teamData) return;
-
+            const roomRef = database.ref('rooms/' + currentRoom);
+            roomRef.on('value', (snapshot) => {
+                const room = snapshot.val();
+                if (!room) return;
+                
                 const playersList = document.getElementById('players-list');
-                playersList.innerHTML = '<h3>Гравці в команді:</h3>' +
-                    teamData.players.map(p => `<div>${p.name}</div>`).join('');
-
-                // Тільки перший гравець може почати гру
-                document.getElementById('start-btn').disabled =
-                    teamData.players[0].id !== playerId || teamData.players.length < 3;
+                playersList.innerHTML = '<h3>Гравці в кімнаті:</h3>';
+                
+                for (const [id, player] of Object.entries(room.players || {})) {
+                    playersList.innerHTML += `<div>${player.name} (${player.role === 'blind' ? 'Сліпий' : 'Керівник'})</div>`;
+                }
+                
+                document.getElementById('team-info').textContent = 
+                    `Кімната: ${currentRoom}\nСліпих: ${room.blindPlayers || 0}, Керівників: ${room.leaderPlayers || 0}`;
             });
         }
 
-        // Перевірка, чи можна почати гру
-        function checkGameStart() {
-            const teamRef = database.ref('teams/' + teamId);
-            teamRef.once('value', (snapshot) => {
-                const teamData = snapshot.val();
-                if (teamData && !teamData.isPlaying) {
+        // Слухач змін у кімнаті
+        function setupRoomListener() {
+            const roomRef = database.ref('rooms/' + currentRoom);
+            
+            roomRef.on('value', (snapshot) => {
+                const room = snapshot.val();
+                if (!room) return;
+                
+                // Якщо кімната заповнена і гра починається
+                if (room.isFull && room.isPlaying) {
                     startGame();
                 }
             });
@@ -319,81 +337,40 @@
 
         // Початок гри
         function startGame() {
-            const teamRef = database.ref('teams/' + teamId);
-            teamRef.once('value', (snapshot) => {
-                const teamData = snapshot.val();
-                if (!teamData) return;
-
-                // Встановлюємо стан гри в 'гра почалася'
-                teamRef.update({ isPlaying: true });
-                showScreen('game');
-
-                tiles = generateTiles();
-                bombPosition = Math.floor(Math.random() * (gridSize * gridSize));
-                renderTiles();
+            const roomRef = database.ref('rooms/' + currentRoom);
+            
+            roomRef.once('value', (snapshot) => {
+                const room = snapshot.val();
+                if (!room) return;
+                
+                // Встановлюємо роль гравця
+                const playerData = room.players[playerId];
+                document.getElementById('player-role').textContent = 
+                    `Ваша роль: ${playerData.role === 'blind' ? 'Сліпий' : 'Керівник'}`;
+                
+                // Генеруємо гру (спрощено)
+                generateGame();
+                
+                // Показуємо ігровий екран
+                document.getElementById('waiting-screen').classList.remove('active');
+                document.getElementById('game-screen').classList.add('active');
             });
         }
 
-        // Генерація плиток для гри
-        function generateTiles() {
-            const allTiles = goodTiles.concat(badTiles);
-            while (allTiles.length < gridSize * gridSize) {
-                allTiles.push('🟦');
-            }
-            return shuffle(allTiles).slice(0, gridSize * gridSize);
+        // Генерація гри (спрощено)
+        function generateGame() {
+            // Тут має бути ваша логіка генерації гри
+            // Наприклад, створення плиток, розміщення бомби тощо
+            console.log("Гра почалася!");
         }
 
-        // Перемішування масиву
-        function shuffle(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-            return array;
-        }
-
-        // Відображення плиток на екрані
-        function renderTiles() {
-            const gameContainer = document.getElementById('game');
-            gameContainer.innerHTML = '';
-            tiles.forEach((tile, index) => {
-                const tileElement = document.createElement('div');
-                tileElement.classList.add('tile');
-                tileElement.textContent = tile;
-                tileElement.onclick = () => tileClick(index);
-                gameContainer.appendChild(tileElement);
-            });
-        }
-
-        // Обробка кліку по плитці
-        function tileClick(index) {
-            const tile = tiles[index];
-
-            if (index === bombPosition) {
-                alert('Гра завершена! Ви натрапили на вибух!');
-                resetGame();
-            } else {
-                tiles[index] = '✅';
-                renderTiles();
-            }
-        }
-
-        // Скидання гри
-        function resetGame() {
-            tiles = [];
-            bombPosition = -1;
-            showScreen('team');
-        }
-
-        // Показати екран
+        // Показуємо екран
         function showScreen(screenName) {
-            Object.values(screens).forEach(screen => {
+            document.querySelectorAll('.screen').forEach(screen => {
                 screen.classList.remove('active');
             });
-            screens[screenName].classList.add('active');
-            currentScreen = screenName;
+            document.getElementById(screenName).classList.add('active');
         }
     </script>
 </body>
-
 </html>
